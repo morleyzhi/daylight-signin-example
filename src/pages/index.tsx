@@ -10,17 +10,17 @@ type HomeProps = {
 const Home: NextPage<HomeProps> = ({ session }) => {
   return (
     <>
+      <ConnectButton
+        chainStatus="none"
+        showBalance={false}
+        accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }}
+      />
+
       {session?.address ? (
         <p>You are signed in with {session.address}.</p>
       ) : (
         <>
           <p>Please sign in, friend.</p>
-
-          <ConnectButton
-            chainStatus="none"
-            showBalance={false}
-            accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }}
-          />
         </>
       )}
     </>

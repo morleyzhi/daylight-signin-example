@@ -85,7 +85,6 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     callbacks: {
       async jwt({ token }) {
         if (token?.sub) {
-          token.id = token.sub;
           token.address = token.sub;
         }
 
@@ -94,7 +93,6 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
 
       async session({ session, token }) {
         if (token?.address) {
-          session.id = token.id;
           session.address = token.address as string;
         }
         return session;
