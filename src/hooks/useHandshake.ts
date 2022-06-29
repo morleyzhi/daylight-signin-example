@@ -2,7 +2,7 @@ import { isMobile } from 'helpers/isMobile';
 import { getCsrfToken, signIn, signOut, useSession } from 'next-auth/react';
 import { createContext, useCallback, useContext, useEffect } from 'react';
 import { SiweMessage } from 'siwe';
-import { useConnect, useDisconnect, useSignMessage, useAccount } from 'wagmi';
+import { useConnect, useDisconnect, useSignMessage } from 'wagmi';
 
 interface HandshakeContextProps {
   isSigningIn: boolean;
@@ -42,13 +42,10 @@ let isRequestingSignature = false;
  * - Hide connect buttons when signing in, or signing out, or whatever
  * - Show auth state
  * - ???
- *
- *
  * */
 export function useHandshake(): HandshakeResponse {
   const { isDisconnected, activeConnector } = useConnect();
   const { disconnect } = useDisconnect();
-  const { data: accountData } = useAccount();
   const session = useSession();
 
   const {
@@ -74,12 +71,17 @@ export function useHandshake(): HandshakeResponse {
     },
   });
 
+  // ===============================
+  // Assemble the message on connect
+  // -------------------------------
+
   const saveMessage = useCallback(async () => {
+    const address = await activeConnector?.getAccount();
     const chainId = await activeConnector?.getChainId();
 
     const msg = new SiweMessage({
       domain: window.location.host,
-      address: accountData?.address,
+      address: address,
       statement:
         'This verifies you own your account. Daylight never submits transactions to the network and never spends any gas.',
       uri: window.location.origin,
@@ -89,18 +91,17 @@ export function useHandshake(): HandshakeResponse {
     });
 
     setMessage(msg);
-  }, [session.status, activeConnector, accountData?.address]);
+  }, [session.status, activeConnector]);
 
   useEffect(() => {
-    // assemble the message as soon as we can
-    if (
-      session.status !== 'authenticated' &&
-      accountData?.address &&
-      activeConnector
-    ) {
+    if (session.status !== 'authenticated' && activeConnector) {
       saveMessage();
     }
-  }, [session.status, activeConnector, accountData?.address]);
+  }, [session.status, activeConnector]);
+
+  // ==================================
+  // Request signature: func and effect
+  // ----------------------------------
 
   const requestSignature = useCallback(async () => {
     // don't sign if signing out
@@ -116,13 +117,12 @@ export function useHandshake(): HandshakeResponse {
 
     setIsSigningMessage(true);
 
-    signMessage();
+    await signMessage();
 
     isRequestingSignature = false;
     setIsSigningMessage(false);
   }, [message, signMessage, disconnect]);
 
-  // TODO: Should this happen by default or by "client"?
   // when we detect a connection (NOT ON MOBILE), handle log-in
   useEffect(() => {
     if (message && !isMobile()) {
