@@ -1,3 +1,4 @@
+import { wallet } from '@rainbow-me/rainbowkit';
 import { isMobile } from 'helpers/isMobile';
 import { getCsrfToken, signIn, signOut, useSession } from 'next-auth/react';
 import { createContext, useCallback, useContext, useEffect } from 'react';
@@ -8,11 +9,9 @@ interface HandshakeContextProps {
   isSigningIn: boolean;
   isSigningOut: boolean;
   isSigningMessage: boolean;
-  message: SiweMessage | undefined;
   setIsSigningMessage: (isSigningMessage: boolean) => void;
   setIsSigningIn: (isSigningIn: boolean) => void;
   setIsSigningOut: (isSigningOut: boolean) => void;
-  setMessage: (message?: SiweMessage) => void;
 }
 
 interface HandshakeResponse {
@@ -26,11 +25,9 @@ export const HandshakeContext = createContext<HandshakeContextProps>({
   isSigningIn: false,
   isSigningOut: false,
   isSigningMessage: false,
-  message: undefined,
   setIsSigningMessage: (isSigningMessage: boolean) => null,
   setIsSigningIn: (isSigningIn: boolean) => null,
   setIsSigningOut: (isSigningOut: boolean) => null,
-  setMessage: (message?: SiweMessage) => null,
 });
 
 // use a cheapo local var to make sure we don't request more than once
@@ -42,102 +39,131 @@ let isRequestingSignature = false;
  * - Hide connect buttons when signing in, or signing out, or whatever
  * - Show auth state
  * - ???
+ *
+ *
  * */
 export function useHandshake(): HandshakeResponse {
-  const { isDisconnected, activeConnector } = useConnect();
+  const { isConnected, isDisconnected, activeConnector } = useConnect();
   const { disconnect } = useDisconnect();
+  const { signMessageAsync } = useSignMessage();
   const session = useSession();
 
   const {
     isSigningMessage,
     isSigningIn,
     isSigningOut,
-    message,
     setIsSigningMessage,
     setIsSigningIn,
     setIsSigningOut,
-    setMessage,
   } = useContext(HandshakeContext);
 
-  const { signMessage } = useSignMessage({
-    message: message ? message.prepareMessage() : 'Not ready!',
-    onSuccess: (signature) => {
+  const requestSignature = useCallback(async () => {
+    // don't sign if signing out
+    if (isSigningOut) {
+      return;
+    }
+
+    if (!activeConnector) {
+      isRequestingSignature = false;
+      throw new Error('You’re not connected to a wallet!');
+    }
+
+    const account = await activeConnector.getAccount();
+    const chainId = await activeConnector.getChainId();
+
+    setIsSigningMessage(true);
+
+    try {
+      const message = new SiweMessage({
+        domain: window.location.host,
+        address: account,
+        statement:
+          'This verifies you own your account. Daylight never submits transactions to the network and never spends any gas.',
+        uri: window.location.origin,
+        version: '1',
+        chainId,
+        nonce: await getCsrfToken(),
+      });
+
+      // if this is on mobile, open the mobile app
+      // (by using Rainbow's most recent wallet)
+      // (This is sneaky and maybe bad!)
+      console.log('Do e think this is mobile???', isMobile());
+
+      if (isMobile()) {
+        console.log('Try to connect with ', activeConnector.id);
+        const activeWallet = wallet[activeConnector.id as keyof typeof wallet];
+
+        if (!activeWallet) {
+          console.log(`no active wallet found for ${activeConnector.id}`);
+        } else {
+          const { createConnector } = activeWallet({
+            chains: activeConnector.chains,
+            appName: 'Daylight',
+          });
+          const getUri = createConnector({ chainId }).mobile?.getUri;
+
+          if (getUri) {
+            const mobileUri = await getUri();
+
+            console.log('mobileURI: ', mobileUri);
+
+            if (mobileUri.startsWith('http')) {
+              window.open(mobileUri, '_blank', 'noreferrer,noopener');
+            } else {
+              window.location.href = mobileUri;
+            }
+          }
+        }
+      }
+
+      const signature = await signMessageAsync({
+        message: message.prepareMessage(),
+      });
+
       setIsSigningIn(true);
       signIn('credentials', {
         message: JSON.stringify(message),
         signature,
         callbackUrl: '/',
       });
-    },
-  });
-
-  // ===============================
-  // Assemble the message on connect
-  // -------------------------------
-
-  const saveMessage = useCallback(async () => {
-    const address = await activeConnector?.getAccount();
-    const chainId = await activeConnector?.getChainId();
-
-    const msg = new SiweMessage({
-      domain: window.location.host,
-      address: address,
-      statement:
-        'This verifies you own your account. Daylight never submits transactions to the network and never spends any gas.',
-      uri: window.location.origin,
-      version: '1',
-      chainId,
-      nonce: await getCsrfToken(),
-    });
-
-    setMessage(msg);
-  }, [session.status, activeConnector]);
-
-  useEffect(() => {
-    if (session.status !== 'authenticated' && activeConnector) {
-      saveMessage();
+    } catch (error) {
+      // Usually, this will error if they kill the connection
+      // Keep it up in case they want to resume via the modal
     }
-  }, [session.status, activeConnector]);
-
-  // ==================================
-  // Request signature: func and effect
-  // ----------------------------------
-
-  const requestSignature = useCallback(async () => {
-    // don't sign if signing out
-    if (isSigningOut || isRequestingSignature || !message) {
-      throw new Error(
-        `[requestSignature] Missing some info, isSigningOut: ${isSigningOut} isRequestingSignature: ${isRequestingSignature} message: ${JSON.stringify(
-          message
-        )} `
-      );
-    }
-
-    isRequestingSignature = true;
-
-    setIsSigningMessage(true);
-
-    await signMessage();
 
     isRequestingSignature = false;
-    setIsSigningMessage(false);
-  }, [message, signMessage, disconnect]);
 
-  // when we detect a connection (NOT ON MOBILE), handle log-in
+    setIsSigningMessage(false);
+  }, [activeConnector, signMessageAsync, disconnect]);
+
+  // TODO: Should this happen by default or by "client"?
   useEffect(() => {
-    if (message && !isMobile()) {
+    // when we detect a connection (NOT ON MOBILE), handle log-in
+    if (
+      isConnected &&
+      session.status === 'unauthenticated' &&
+      activeConnector &&
+      !isRequestingSignature &&
+      // NOT on mobile!
+      !isMobile()
+    ) {
+      isRequestingSignature = true;
       requestSignature();
     }
-  }, [message, requestSignature]);
 
-  // when we disconnect, handle sign out
-  useEffect(() => {
+    // likewise, when we disconnect, handle sign out
     if (isDisconnected && session.status === 'authenticated') {
       setIsSigningOut(true);
-      setMessage(undefined);
       signOut();
     }
-  }, [isDisconnected, session.status]);
+  }, [
+    isConnected,
+    isDisconnected,
+    activeConnector,
+    session.status,
+    requestSignature,
+  ]);
 
   return {
     requestSignature,
