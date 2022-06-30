@@ -7,18 +7,15 @@ import styled from 'styled-components';
 import { px } from 'helpers/px';
 import { COLORS } from 'constants/colors';
 import { isMobile } from 'helpers/isMobile';
+import { useHandshake } from 'hooks/useHandshake';
+import { useDisconnect } from 'wagmi';
 
-type SignMessageModalProps = {
-  isLoading: boolean;
-  onContinue: () => void;
-  onCancel: () => void;
-};
+const SignMessageModal: React.FC = () => {
+  const { isSigningMessage, isSigningIn, requestSignature } = useHandshake();
+  const { disconnect } = useDisconnect();
 
-const SignMessageModal: React.FC<SignMessageModalProps> = ({
-  isLoading,
-  onContinue,
-  onCancel,
-}) => {
+  const isLoading = isSigningMessage || isSigningIn;
+
   const title = isMobile()
     ? 'Sign a message in your wallet to continue'
     : 'Sign the message we sent to your wallet to continue';
@@ -40,12 +37,12 @@ const SignMessageModal: React.FC<SignMessageModalProps> = ({
         <div>
           <Button
             color={ButtonColor.white}
-            onClick={onContinue}
+            onClick={() => requestSignature()}
             disabled={isLoading}
           >
             {isLoading ? 'Waiting…' : 'Continue'}
           </Button>
-          <Button color={ButtonColor.whiteText} onClick={onCancel}>
+          <Button color={ButtonColor.whiteText} onClick={() => disconnect()}>
             Cancel
           </Button>
         </div>
